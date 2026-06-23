@@ -143,42 +143,97 @@ func chapterKey(for quote: StrategyQuote) -> String {
     return quote.chapter.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? quote.chapter
 }
 
-func todaysQuoteIndices() -> [Int] {
+struct SeededRandomNumberGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        self.state = seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var result = state
+        result = (result ^ (result >> 30)) &* 0xBF58476D1CE4E5B9
+        result = (result ^ (result >> 27)) &* 0x94D049BB133111EB
+        return result ^ (result >> 31)
+    }
+}
+
+func quoteDayNumber(for date: Date, calendar: Calendar = .current) -> Int {
+    let startOfDay = calendar.startOfDay(for: date)
+    return calendar.dateComponents(
+        [.day],
+        from: Date(timeIntervalSince1970: 0),
+        to: startOfDay
+    ).day ?? 0
+}
+
+func dailyQuoteIndices(for date: Date, calendar: Calendar = .current) -> [Int] {
     let count = strategyQuotes.count
     guard count > 0 else { return [] }
 
-    let startOfToday = Calendar.current.startOfDay(for: Date())
-    let daysSinceReference = Calendar.current.dateComponents(
-        [.day],
-        from: Date(timeIntervalSince1970: 0),
-        to: startOfToday
-    ).day ?? 0
+    let targetDayNumber = max(0, quoteDayNumber(for: date, calendar: calendar))
+    var recentSelections: [[Int]] = []
+    var selectedIndices: [Int] = []
 
+    for dayNumber in 0...targetDayNumber {
+        let recentlyUsed = Set(recentSelections.flatMap { $0 })
+        selectedIndices = seededQuoteIndices(for: dayNumber, avoiding: recentlyUsed)
+        recentSelections.append(selectedIndices)
+
+        if recentSelections.count > 5 {
+            recentSelections.removeFirst()
+        }
+    }
+
+    return selectedIndices
+}
+
+func todaysQuoteIndices() -> [Int] {
+    dailyQuoteIndices(for: Date())
+}
+
+private func seededQuoteIndices(for dayNumber: Int, avoiding recentlyUsed: Set<Int>) -> [Int] {
+    let count = strategyQuotes.count
+    var generator = SeededRandomNumberGenerator(seed: UInt64(bitPattern: Int64(dayNumber)) ^ 0xD411A7E957A7E9B1)
+    let shuffledIndices = Array(strategyQuotes.indices).shuffled(using: &generator)
     var selectedIndices: [Int] = []
     var usedChapters: Set<String> = []
 
-    var offset = 0
+    func append(_ index: Int, trackingChapter: Bool = true) {
+        selectedIndices.append(index)
 
-    while selectedIndices.count < 3 && offset < count {
-        let index = ((daysSinceReference * 3) + offset) % count
-        let quote = strategyQuotes[index]
-        let chapter = chapterKey(for: quote)
+        if trackingChapter {
+            usedChapters.insert(chapterKey(for: strategyQuotes[index]))
+        }
+    }
 
-        if !usedChapters.contains(chapter) {
+    for index in shuffledIndices where selectedIndices.count < 3 {
+        let chapter = chapterKey(for: strategyQuotes[index])
+
+        if !recentlyUsed.contains(index) && !usedChapters.contains(chapter) {
+            append(index)
+        }
+    }
+
+    for index in shuffledIndices where selectedIndices.count < 3 {
+        if !recentlyUsed.contains(index) && !selectedIndices.contains(index) {
+            append(index, trackingChapter: false)
+        }
+    }
+
+    for index in shuffledIndices where selectedIndices.count < 3 {
+        let chapter = chapterKey(for: strategyQuotes[index])
+
+        if !selectedIndices.contains(index) && !usedChapters.contains(chapter) {
             selectedIndices.append(index)
             usedChapters.insert(chapter)
         }
-
-        offset += 1
     }
 
-    while selectedIndices.count < 3 {
-        let fallbackIndex = (daysSinceReference + selectedIndices.count) % count
-
-        if !selectedIndices.contains(fallbackIndex) {
-            selectedIndices.append(fallbackIndex)
-        } else {
-            break
+    for index in shuffledIndices where selectedIndices.count < min(3, count) {
+        if !selectedIndices.contains(index) {
+            append(index, trackingChapter: false)
         }
     }
 
@@ -199,6 +254,14 @@ struct StrategyPracticeEntry: Codable, Identifiable {
 struct StrategyProgress {
     let totalCompletedDays: Int
     let currentStreak: Int
+}
+
+struct AppBuildInfo {
+    static var displayVersion: String {
+        let baseVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1"
+        let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+        return "Version \(baseVersion).\(buildNumber)"
+    }
 }
 
 class StrategyPracticeStore: ObservableObject {
@@ -253,6 +316,11 @@ class StrategyPracticeStore: ObservableObject {
         }
 
         save()
+    }
+
+    func deleteAllEntries() {
+        entries = []
+        UserDefaults.standard.removeObject(forKey: storageKey)
     }
 
     private func load() {
@@ -310,36 +378,69 @@ class NotificationManager {
     func requestPermissionAndSchedule() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted {
-                self.scheduleMorningQuote()
+                self.scheduleNext30DaysMorningQuotes()
             }
         }
     }
 
-    func scheduleMorningQuote() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["daily_strategy_quote"])
+    func scheduleNext30DaysMorningQuotes() {
+        let center = UNUserNotificationCenter.current()
+        let calendar = Calendar.current
+        let notificationDates = nextMorningNotificationDates(count: 30, calendar: calendar)
+        let newIdentifiers = notificationDates.map { notificationIdentifier(for: $0, calendar: calendar) }
 
-        let todayIndices = todaysQuoteIndices()
-        let quote = strategyQuotes[todayIndices.first ?? 0]
+        center.getPendingNotificationRequests { requests in
+            let staleIdentifiers = requests
+                .map(\.identifier)
+                .filter { $0 == "daily_strategy_quote" || $0.hasPrefix("daily_strategy_quote_") }
 
-        let content = UNMutableNotificationContent()
-        content.title = "Daily Strategy"
-        content.subtitle = quote.quote
-        content.body = quote.challenge
-        content.sound = .default
+            center.removePendingNotificationRequests(withIdentifiers: staleIdentifiers + newIdentifiers)
 
-        var dateComponents = DateComponents()
-        dateComponents.hour = 8
-        dateComponents.minute = 0
+            for date in notificationDates {
+                let quoteIndices = dailyQuoteIndices(for: date, calendar: calendar)
+                guard !quoteIndices.isEmpty else { continue }
 
-        let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+                let rotatedIndex = quoteDayNumber(for: date, calendar: calendar) % quoteIndices.count
+                let quote = strategyQuotes[quoteIndices[rotatedIndex]]
 
-        let request = UNNotificationRequest(
-            identifier: "daily_strategy_quote",
-            content: content,
-            trigger: trigger
-        )
+                let content = UNMutableNotificationContent()
+                content.title = "Daily Strategy"
+                content.subtitle = quote.quote
+                content.body = quote.challenge
+                content.sound = .default
 
-        UNUserNotificationCenter.current().add(request)
+                let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+                let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+                let request = UNNotificationRequest(
+                    identifier: self.notificationIdentifier(for: date, calendar: calendar),
+                    content: content,
+                    trigger: trigger
+                )
+
+                center.add(request)
+            }
+        }
+    }
+
+    private func nextMorningNotificationDates(count: Int, calendar: Calendar) -> [Date] {
+        guard count > 0 else { return [] }
+
+        let now = Date()
+        var startDate = calendar.startOfDay(for: now)
+        var morning = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: startDate) ?? startDate
+
+        if morning <= now {
+            startDate = calendar.date(byAdding: .day, value: 1, to: startDate) ?? startDate
+            morning = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: startDate) ?? startDate
+        }
+
+        return (0..<count).compactMap { offset in
+            calendar.date(byAdding: .day, value: offset, to: morning)
+        }
+    }
+
+    private func notificationIdentifier(for date: Date, calendar: Calendar) -> String {
+        "daily_strategy_quote_\(quoteDayNumber(for: date, calendar: calendar))"
     }
 }
 
@@ -440,7 +541,7 @@ struct ContentView: View {
 
                     Button {
                         NotificationManager.shared.requestPermissionAndSchedule()
-                        notificationMessage = "8 AM daily strategy enabled"
+                        notificationMessage = "8 AM daily strategies scheduled for the next 30 days"
                     } label: {
                         Label("Enable 8 AM Daily Strategy", systemImage: "bell")
                             .frame(maxWidth: .infinity)
@@ -461,7 +562,19 @@ struct ContentView: View {
                     }
                     .buttonStyle(.bordered)
 
+                    NavigationLink {
+                        PrivacyDataView(practiceStore: practiceStore)
+                    } label: {
+                        Label("Privacy & Data", systemImage: "lock.shield")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
                     Text("\(strategyQuotes.count) curated passages")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text(AppBuildInfo.displayVersion)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -633,6 +746,58 @@ struct HistoryView: View {
             }
         }
         .navigationTitle("Practice History")
+    }
+}
+
+struct PrivacyDataView: View {
+    @ObservedObject var practiceStore: StrategyPracticeStore
+    @State private var showingDeleteConfirmation = false
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Your practice entries stay on this device.")
+                        .font(.headline)
+
+                    Text("Daily Strategy does not use accounts, cloud sync, tracking, ads, analytics, or subscriptions. Your saved decisions and reflections are stored locally only.")
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("Privacy")
+            }
+
+            Section {
+                Label("No login", systemImage: "person.crop.circle.badge.xmark")
+                Label("No cloud sync", systemImage: "icloud.slash")
+                Label("No tracking", systemImage: "eye.slash")
+                Label("No analytics or ads", systemImage: "chart.bar.xaxis")
+            } header: {
+                Text("Data Use")
+            }
+
+            Section {
+                Button(role: .destructive) {
+                    showingDeleteConfirmation = true
+                } label: {
+                    Label("Delete All Practice Data", systemImage: "trash")
+                }
+                .disabled(practiceStore.entries.isEmpty)
+            } footer: {
+                Text("This removes all saved practice history from this device. The quote library is not changed.")
+            }
+        }
+        .navigationTitle("Privacy & Data")
+        .alert("Delete all practice data?", isPresented: $showingDeleteConfirmation) {
+            Button("Delete All Data", role: .destructive) {
+                practiceStore.deleteAllEntries()
+            }
+
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This cannot be undone.")
+        }
     }
 }
 
