@@ -185,6 +185,125 @@ func todaysQuoteIndices() -> [Int] {
     return selectedIndices
 }
 
+struct StrategyPracticeEntry: Codable, Identifiable {
+    let id: String
+    let date: Date
+    let quoteIndex: Int
+    var decision: String
+
+    var quote: StrategyQuote {
+        strategyQuotes.indices.contains(quoteIndex) ? strategyQuotes[quoteIndex] : strategyQuotes[0]
+    }
+}
+
+struct StrategyProgress {
+    let totalCompletedDays: Int
+    let currentStreak: Int
+}
+
+class StrategyPracticeStore: ObservableObject {
+    @Published private(set) var entries: [StrategyPracticeEntry] = []
+
+    private let storageKey = "daily_strategy_practice_entries"
+    private let encoder = JSONEncoder()
+    private let decoder = JSONDecoder()
+
+    init() {
+        encoder.dateEncodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .iso8601
+        load()
+    }
+
+    var sortedEntries: [StrategyPracticeEntry] {
+        entries.sorted { $0.date > $1.date }
+    }
+
+    var progress: StrategyProgress {
+        let completedDates = Set(entries.map { dayKey(for: $0.date) })
+        return StrategyProgress(
+            totalCompletedDays: completedDates.count,
+            currentStreak: currentStreak(from: completedDates)
+        )
+    }
+
+    func entry(for date: Date, quoteIndex: Int) -> StrategyPracticeEntry? {
+        let id = entryID(for: date, quoteIndex: quoteIndex)
+        return entries.first { $0.id == id }
+    }
+
+    func saveEntry(for date: Date, quoteIndex: Int, decision: String) {
+        let trimmedDecision = decision.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = entryID(for: date, quoteIndex: quoteIndex)
+
+        if let existingIndex = entries.firstIndex(where: { $0.id == id }) {
+            if trimmedDecision.isEmpty {
+                entries.remove(at: existingIndex)
+            } else {
+                entries[existingIndex].decision = trimmedDecision
+            }
+        } else if !trimmedDecision.isEmpty {
+            entries.append(
+                StrategyPracticeEntry(
+                    id: id,
+                    date: Calendar.current.startOfDay(for: date),
+                    quoteIndex: quoteIndex,
+                    decision: trimmedDecision
+                )
+            )
+        }
+
+        save()
+    }
+
+    private func load() {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              let decodedEntries = try? decoder.decode([StrategyPracticeEntry].self, from: data) else {
+            entries = []
+            return
+        }
+
+        entries = decodedEntries
+    }
+
+    private func save() {
+        guard let data = try? encoder.encode(entries) else { return }
+        UserDefaults.standard.set(data, forKey: storageKey)
+    }
+
+    private func currentStreak(from completedDates: Set<String>) -> Int {
+        var streak = 0
+        var date = Calendar.current.startOfDay(for: Date())
+
+        while completedDates.contains(dayKey(for: date)) {
+            streak += 1
+
+            guard let previousDay = Calendar.current.date(byAdding: .day, value: -1, to: date) else {
+                break
+            }
+
+            date = previousDay
+        }
+
+        return streak
+    }
+
+    private func entryID(for date: Date, quoteIndex: Int) -> String {
+        "\(dayKey(for: date))-\(quoteIndex)"
+    }
+
+    private func dayKey(for date: Date) -> String {
+        Self.dayKeyFormatter.string(from: Calendar.current.startOfDay(for: date))
+    }
+
+    private static let dayKeyFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
 class NotificationManager {
     static let shared = NotificationManager()
 
@@ -225,13 +344,24 @@ class NotificationManager {
 }
 
 struct ContentView: View {
+    @StateObject private var practiceStore = StrategyPracticeStore()
     @State private var todayIndices = todaysQuoteIndices()
     @State private var selectedDailyQuote = 0
     @State private var notificationMessage = ""
+    @State private var decisionText = ""
+    @State private var completionMessage = ""
 
     var currentQuote: StrategyQuote {
         let index = todayIndices[selectedDailyQuote]
         return strategyQuotes[index]
+    }
+
+    var currentQuoteIndex: Int {
+        todayIndices[selectedDailyQuote]
+    }
+
+    var currentEntry: StrategyPracticeEntry? {
+        practiceStore.entry(for: Date(), quoteIndex: currentQuoteIndex)
     }
 
     var body: some View {
@@ -258,6 +388,15 @@ struct ContentView: View {
                     StrategyCard(title: "Translation", text: currentQuote.translation)
                     StrategyCard(title: "Applied Wisdom", text: currentQuote.wisdom)
                     StrategyCard(title: "Today's Challenge", text: currentQuote.challenge)
+
+                    ProgressSummaryView(progress: practiceStore.progress)
+
+                    PracticeCard(
+                        decisionText: $decisionText,
+                        isComplete: currentEntry != nil,
+                        completionMessage: completionMessage,
+                        onComplete: markChallengeComplete
+                    )
 
                     Text(currentQuote.chapter)
                         .font(.caption)
@@ -314,17 +453,42 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    NavigationLink {
+                        HistoryView(entries: practiceStore.sortedEntries)
+                    } label: {
+                        Label("Practice History", systemImage: "clock.arrow.circlepath")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
                     Text("\(strategyQuotes.count) curated passages")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 .padding()
             }
+            .navigationTitle("Daily Practice")
+            .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear {
             todayIndices = todaysQuoteIndices()
             selectedDailyQuote = 0
+            loadDecisionForSelectedQuote()
         }
+        .onChange(of: selectedDailyQuote) { _ in
+            loadDecisionForSelectedQuote()
+        }
+    }
+
+    private func loadDecisionForSelectedQuote() {
+        decisionText = currentEntry?.decision ?? ""
+        completionMessage = ""
+    }
+
+    private func markChallengeComplete() {
+        practiceStore.saveEntry(for: Date(), quoteIndex: currentQuoteIndex, decision: decisionText)
+        decisionText = currentEntry?.decision ?? decisionText.trimmingCharacters(in: .whitespacesAndNewlines)
+        completionMessage = currentEntry == nil ? "" : "Challenge saved for today"
     }
 }
 
@@ -352,7 +516,126 @@ struct StrategyCard: View {
     }
 }
 
+struct ProgressSummaryView: View {
+    let progress: StrategyProgress
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProgressMetric(title: "Completed Days", value: "\(progress.totalCompletedDays)")
+            ProgressMetric(title: "Current Streak", value: "\(progress.currentStreak)")
+        }
+    }
+}
+
+struct ProgressMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(value)
+                .font(.title2)
+                .fontWeight(.bold)
+
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct PracticeCard: View {
+    @Binding var decisionText: String
+    let isComplete: Bool
+    let completionMessage: String
+    let onComplete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("My Decision Today")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $decisionText)
+                .frame(minHeight: 110)
+                .padding(8)
+                .background(Color(.secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .topLeading) {
+                    if decisionText.isEmpty {
+                        Text("Write the decision, situation, or reflection you will apply this strategy to.")
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 16)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            Button(action: onComplete) {
+                Label(
+                    isComplete ? "Update Completed Challenge" : "Mark Challenge Complete",
+                    systemImage: isComplete ? "checkmark.circle.fill" : "checkmark.circle"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(decisionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if !completionMessage.isEmpty {
+                Text(completionMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct HistoryView: View {
+    let entries: [StrategyPracticeEntry]
+
+    var body: some View {
+        Group {
+            if entries.isEmpty {
+                ContentUnavailableView(
+                    "No Completed Challenges",
+                    systemImage: "square.and.pencil",
+                    description: Text("Saved decisions and reflections will appear here after you complete a daily challenge.")
+                )
+            } else {
+                List(entries) { entry in
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(entry.date, style: .date)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(entry.quote.quote)
+                            .font(.title3)
+                            .fontWeight(.medium)
+
+                        Text(entry.quote.challenge)
+                            .font(.subheadline)
+
+                        Text(entry.decision)
+                            .font(.body)
+                            .padding(.top, 4)
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+        .navigationTitle("Practice History")
+    }
+}
+
 #Preview {
     ContentView()
 }
-
