@@ -1,6 +1,8 @@
 import SwiftUI
 import UserNotifications
 
+let privacyPolicyURL = URL(string: "https://example.com/privacy")!
+
 struct StrategyQuote: Identifiable {
     let id = UUID()
     let quote: String
@@ -246,8 +248,9 @@ struct StrategyPracticeEntry: Codable, Identifiable {
     let quoteIndex: Int
     var decision: String
 
-    var quote: StrategyQuote {
-        strategyQuotes.indices.contains(quoteIndex) ? strategyQuotes[quoteIndex] : strategyQuotes[0]
+    var quote: StrategyQuote? {
+        guard !strategyQuotes.isEmpty else { return nil }
+        return strategyQuotes.indices.contains(quoteIndex) ? strategyQuotes[quoteIndex] : strategyQuotes.first
     }
 }
 
@@ -381,19 +384,29 @@ class StrategyPracticeStore: ObservableObject {
 class NotificationManager {
     static let shared = NotificationManager()
 
-    func requestPermissionAndSchedule(completion: ((Bool) -> Void)? = nil) {
+    enum ScheduleResult {
+        case scheduled
+        case denied
+        case failed
+    }
+
+    func requestPermissionAndSchedule(completion: ((ScheduleResult) -> Void)? = nil) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted {
-                self.scheduleNext30DaysMorningQuotes()
-            }
-
-            DispatchQueue.main.async {
-                completion?(granted)
+                self.scheduleNext30DaysMorningQuotes { success in
+                    DispatchQueue.main.async {
+                        completion?(success ? .scheduled : .failed)
+                    }
+                }
+            } else {
+                DispatchQueue.main.async {
+                    completion?(.denied)
+                }
             }
         }
     }
 
-    func scheduleNext30DaysMorningQuotes() {
+    func scheduleNext30DaysMorningQuotes(completion: ((Bool) -> Void)? = nil) {
         let center = UNUserNotificationCenter.current()
         let calendar = Calendar.current
         let notificationDates = nextMorningNotificationDates(count: 30, calendar: calendar)
@@ -405,6 +418,9 @@ class NotificationManager {
                 .filter { $0 == "daily_strategy_quote" || $0.hasPrefix("daily_strategy_quote_") }
 
             center.removePendingNotificationRequests(withIdentifiers: staleIdentifiers + newIdentifiers)
+
+            let group = DispatchGroup()
+            var schedulingSucceeded = true
 
             for date in notificationDates {
                 let quoteIndices = dailyQuoteIndices(for: date, calendar: calendar)
@@ -427,7 +443,18 @@ class NotificationManager {
                     trigger: trigger
                 )
 
-                center.add(request)
+                group.enter()
+                center.add(request) { error in
+                    if error != nil {
+                        schedulingSucceeded = false
+                    }
+
+                    group.leave()
+                }
+            }
+
+            group.notify(queue: .main) {
+                completion?(schedulingSucceeded)
             }
         }
     }
@@ -607,7 +634,10 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
 
                     NavigationLink {
-                        SettingsView(practiceStore: practiceStore)
+                        SettingsView(
+                            practiceStore: practiceStore,
+                            onDeleteAllPracticeData: refreshCurrentPractice
+                        )
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                             .frame(maxWidth: .infinity)
@@ -641,6 +671,10 @@ struct ContentView: View {
     private func loadDecisionForSelectedQuote() {
         decisionText = currentEntry?.decision ?? ""
         completionMessage = ""
+    }
+
+    private func refreshCurrentPractice() {
+        loadDecisionForSelectedQuote()
     }
 
     private func markChallengeComplete() {
@@ -797,12 +831,14 @@ struct HistoryView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        Text(entry.quote.quote)
-                            .font(.title3)
-                            .fontWeight(.medium)
+                        if let quote = entry.quote {
+                            Text(quote.quote)
+                                .font(.title3)
+                                .fontWeight(.medium)
 
-                        Text(entry.quote.challenge)
-                            .font(.subheadline)
+                            Text(quote.challenge)
+                                .font(.subheadline)
+                        }
 
                         Text(entry.decision)
                             .font(.body)
@@ -818,6 +854,7 @@ struct HistoryView: View {
 
 struct SettingsView: View {
     @ObservedObject var practiceStore: StrategyPracticeStore
+    let onDeleteAllPracticeData: () -> Void
     @State private var remindersScheduled = false
     @State private var reminderMessage = ""
     @State private var showingDeleteConfirmation = false
@@ -834,8 +871,16 @@ struct SettingsView: View {
                 )
 
                 Button {
-                    NotificationManager.shared.requestPermissionAndSchedule { granted in
-                        reminderMessage = granted ? "8 AM daily reminders scheduled for the next 30 days" : "Notification permission was not granted"
+                    NotificationManager.shared.requestPermissionAndSchedule { result in
+                        switch result {
+                        case .scheduled:
+                            reminderMessage = "8 AM daily reminders scheduled for the next 30 days"
+                        case .denied:
+                            reminderMessage = "Notification permission was not granted"
+                        case .failed:
+                            reminderMessage = "Daily reminders could not be scheduled. Please try again."
+                        }
+
                         refreshReminderStatus()
                     }
                 } label: {
@@ -870,6 +915,10 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
+
+                Link(destination: privacyPolicyURL) {
+                    Label("Privacy Policy", systemImage: "doc.text")
+                }
             } header: {
                 Text("Privacy")
             }
@@ -908,6 +957,7 @@ struct SettingsView: View {
         .alert("Delete all practice data?", isPresented: $showingDeleteConfirmation) {
             Button("Delete All Data", role: .destructive) {
                 practiceStore.deleteAllEntries()
+                onDeleteAllPracticeData()
             }
 
             Button("Cancel", role: .cancel) { }
