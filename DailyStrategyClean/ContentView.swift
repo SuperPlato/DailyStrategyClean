@@ -2,7 +2,7 @@ import SwiftUI
 import UserNotifications
 import Combine
 
-let privacyPolicyURL = URL(string: "https://example.com/privacy")!
+let privacyPolicyURL = URL(string: "https://sites.google.com/view/superplato321/home")!
 
 struct StrategyQuote: Identifiable {
     let id = UUID()
