@@ -634,6 +634,14 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
 
                     NavigationLink {
+                        StrategyLibraryView()
+                    } label: {
+                        Label("Strategy Library", systemImage: "books.vertical")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    NavigationLink {
                         SettingsView(
                             practiceStore: practiceStore,
                             onDeleteAllPracticeData: refreshCurrentPractice
@@ -849,6 +857,114 @@ struct HistoryView: View {
             }
         }
         .navigationTitle("Practice History")
+    }
+}
+
+struct StrategyLibraryView: View {
+    @State private var searchText = ""
+
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearching: Bool {
+        !trimmedSearchText.isEmpty
+    }
+
+    private var filteredQuotes: [StrategyQuote] {
+        guard isSearching else { return strategyQuotes }
+
+        return strategyQuotes.filter { quote in
+            quote.quote.localizedCaseInsensitiveContains(trimmedSearchText) ||
+            quote.translation.localizedCaseInsensitiveContains(trimmedSearchText) ||
+            quote.wisdom.localizedCaseInsensitiveContains(trimmedSearchText) ||
+            quote.chapter.localizedCaseInsensitiveContains(trimmedSearchText)
+        }
+    }
+
+    private var chapterNames: [String] {
+        var seenChapters: Set<String> = []
+        var names: [String] = []
+
+        for quote in strategyQuotes {
+            if !seenChapters.contains(quote.chapter) {
+                seenChapters.insert(quote.chapter)
+                names.append(quote.chapter)
+            }
+        }
+
+        return names
+    }
+
+    var body: some View {
+        List {
+            if isSearching {
+                ForEach(filteredQuotes) { quote in
+                    NavigationLink {
+                        StrategyQuoteDetailView(quote: quote)
+                    } label: {
+                        StrategyLibraryRow(quote: quote)
+                    }
+                }
+            } else {
+                ForEach(chapterNames, id: \.self) { chapter in
+                    Section(chapter) {
+                        ForEach(strategyQuotes.filter { $0.chapter == chapter }) { quote in
+                            NavigationLink {
+                                StrategyQuoteDetailView(quote: quote)
+                            } label: {
+                                StrategyLibraryRow(quote: quote)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Strategy Library")
+        .searchable(text: $searchText, prompt: "Search quotes, wisdom, or chapter")
+    }
+}
+
+struct StrategyLibraryRow: View {
+    let quote: StrategyQuote
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(quote.quote)
+                .font(.headline)
+
+            Text(quote.translation)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            Text(quote.chapter)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct StrategyQuoteDetailView: View {
+    let quote: StrategyQuote
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                StrategyCard(title: "Original Quote", text: quote.quote, isChinese: true)
+                StrategyCard(title: "Translation", text: quote.translation)
+                StrategyCard(title: "Applied Wisdom", text: quote.wisdom)
+                StrategyCard(title: "Today's Challenge", text: quote.challenge)
+
+                Text(quote.chapter)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+        }
+        .navigationTitle("Strategy")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
