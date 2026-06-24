@@ -318,6 +318,12 @@ class StrategyPracticeStore: ObservableObject {
         save()
     }
 
+    func deleteEntry(for date: Date, quoteIndex: Int) {
+        let id = entryID(for: date, quoteIndex: quoteIndex)
+        entries.removeAll { $0.id == id }
+        save()
+    }
+
     func deleteAllEntries() {
         entries = []
         UserDefaults.standard.removeObject(forKey: storageKey)
@@ -496,7 +502,8 @@ struct ContentView: View {
                         decisionText: $decisionText,
                         isComplete: currentEntry != nil,
                         completionMessage: completionMessage,
-                        onComplete: markChallengeComplete
+                        onComplete: markChallengeComplete,
+                        onClear: clearTodayEntry
                     )
 
                     Text(currentQuote.chapter)
@@ -603,6 +610,12 @@ struct ContentView: View {
         decisionText = currentEntry?.decision ?? decisionText.trimmingCharacters(in: .whitespacesAndNewlines)
         completionMessage = currentEntry == nil ? "" : "Challenge saved for today"
     }
+
+    private func clearTodayEntry() {
+        practiceStore.deleteEntry(for: Date(), quoteIndex: currentQuoteIndex)
+        decisionText = ""
+        completionMessage = ""
+    }
 }
 
 struct StrategyCard: View {
@@ -667,6 +680,7 @@ struct PracticeCard: View {
     let isComplete: Bool
     let completionMessage: String
     let onComplete: () -> Void
+    let onClear: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -698,6 +712,14 @@ struct PracticeCard: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(decisionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+            if isComplete {
+                Button(role: .destructive, action: onClear) {
+                    Label("Clear Today's Entry", systemImage: "trash")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+            }
 
             if !completionMessage.isEmpty {
                 Text(completionMessage)
