@@ -381,10 +381,14 @@ class StrategyPracticeStore: ObservableObject {
 class NotificationManager {
     static let shared = NotificationManager()
 
-    func requestPermissionAndSchedule() {
+    func requestPermissionAndSchedule(completion: ((Bool) -> Void)? = nil) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             if granted {
                 self.scheduleNext30DaysMorningQuotes()
+            }
+
+            DispatchQueue.main.async {
+                completion?(granted)
             }
         }
     }
@@ -428,6 +432,29 @@ class NotificationManager {
         }
     }
 
+    func disableDailyReminders(completion: (() -> Void)? = nil) {
+        let center = UNUserNotificationCenter.current()
+
+        center.getPendingNotificationRequests { requests in
+            let identifiers = self.dailyReminderIdentifiers(from: requests)
+            center.removePendingNotificationRequests(withIdentifiers: identifiers)
+
+            DispatchQueue.main.async {
+                completion?()
+            }
+        }
+    }
+
+    func remindersScheduled(completion: @escaping (Bool) -> Void) {
+        UNUserNotificationCenter.current().getPendingNotificationRequests { requests in
+            let hasDailyReminder = !self.dailyReminderIdentifiers(from: requests).isEmpty
+
+            DispatchQueue.main.async {
+                completion(hasDailyReminder)
+            }
+        }
+    }
+
     private func nextMorningNotificationDates(count: Int, calendar: Calendar) -> [Date] {
         guard count > 0 else { return [] }
 
@@ -448,27 +475,44 @@ class NotificationManager {
     private func notificationIdentifier(for date: Date, calendar: Calendar) -> String {
         "daily_strategy_quote_\(quoteDayNumber(for: date, calendar: calendar))"
     }
+
+    private func dailyReminderIdentifiers(from requests: [UNNotificationRequest]) -> [String] {
+        requests
+            .map(\.identifier)
+            .filter { $0 == "daily_strategy_quote" || $0.hasPrefix("daily_strategy_quote_") }
+    }
 }
 
 struct ContentView: View {
     @StateObject private var practiceStore = StrategyPracticeStore()
     @State private var todayIndices = todaysQuoteIndices()
     @State private var selectedDailyQuote = 0
-    @State private var notificationMessage = ""
     @State private var decisionText = ""
     @State private var completionMessage = ""
 
-    var currentQuote: StrategyQuote {
-        let index = todayIndices[selectedDailyQuote]
+    var currentQuote: StrategyQuote? {
+        guard let index = currentQuoteIndex else { return nil }
         return strategyQuotes[index]
     }
 
-    var currentQuoteIndex: Int {
-        todayIndices[selectedDailyQuote]
+    var currentQuoteIndex: Int? {
+        guard !todayIndices.isEmpty else { return nil }
+
+        let boundedSelection = min(max(selectedDailyQuote, 0), todayIndices.count - 1)
+        let index = todayIndices[boundedSelection]
+        guard strategyQuotes.indices.contains(index) else { return nil }
+
+        return index
     }
 
     var currentEntry: StrategyPracticeEntry? {
-        practiceStore.entry(for: Date(), quoteIndex: currentQuoteIndex)
+        guard let currentQuoteIndex else { return nil }
+        return practiceStore.entry(for: Date(), quoteIndex: currentQuoteIndex)
+    }
+
+    var displayedStrategyNumber: Int {
+        guard !todayIndices.isEmpty else { return 0 }
+        return min(max(selectedDailyQuote, 0), todayIndices.count - 1) + 1
     }
 
     var body: some View {
@@ -487,32 +531,40 @@ struct ContentView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text("Strategy \(selectedDailyQuote + 1) of 3")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if let currentQuote {
+                        Text("Strategy \(displayedStrategyNumber) of \(todayIndices.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                    StrategyCard(title: "Original Quote", text: currentQuote.quote, isChinese: true)
-                    StrategyCard(title: "Translation", text: currentQuote.translation)
-                    StrategyCard(title: "Applied Wisdom", text: currentQuote.wisdom)
-                    StrategyCard(title: "Today's Challenge", text: currentQuote.challenge)
+                        StrategyCard(title: "Original Quote", text: currentQuote.quote, isChinese: true)
+                        StrategyCard(title: "Translation", text: currentQuote.translation)
+                        StrategyCard(title: "Applied Wisdom", text: currentQuote.wisdom)
+                        StrategyCard(title: "Today's Challenge", text: currentQuote.challenge)
 
-                    ProgressSummaryView(progress: practiceStore.progress)
+                        ProgressSummaryView(progress: practiceStore.progress)
 
-                    PracticeCard(
-                        decisionText: $decisionText,
-                        isComplete: currentEntry != nil,
-                        completionMessage: completionMessage,
-                        onComplete: markChallengeComplete,
-                        onClear: clearTodayEntry
-                    )
+                        PracticeCard(
+                            decisionText: $decisionText,
+                            isComplete: currentEntry != nil,
+                            completionMessage: completionMessage,
+                            onComplete: markChallengeComplete,
+                            onClear: clearTodayEntry
+                        )
 
-                    Text(currentQuote.chapter)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        Text(currentQuote.chapter)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                    Text("Sun Tzu · The Art of War")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        Text("Sun Tzu · The Art of War")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ContentUnavailableView(
+                            "No Strategy Available",
+                            systemImage: "exclamationmark.triangle",
+                            description: Text("Daily Strategy could not load today's practice.")
+                        )
+                    }
 
                     HStack {
                         Button {
@@ -527,7 +579,7 @@ struct ContentView: View {
                         .disabled(selectedDailyQuote == 0)
 
                         Button {
-                            if selectedDailyQuote < 2 {
+                            if selectedDailyQuote < todayIndices.count - 1 {
                                 selectedDailyQuote += 1
                             }
                         } label: {
@@ -535,30 +587,15 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(selectedDailyQuote == 2)
+                        .disabled(todayIndices.isEmpty || selectedDailyQuote >= todayIndices.count - 1)
                     }
 
-                    if selectedDailyQuote == 2 {
+                    if !todayIndices.isEmpty && selectedDailyQuote == todayIndices.count - 1 {
                         Text("You have completed today’s three strategies. Come back tomorrow for three new reflections.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.top, 4)
-                    }
-
-                    Button {
-                        NotificationManager.shared.requestPermissionAndSchedule()
-                        notificationMessage = "8 AM daily strategies scheduled for the next 30 days"
-                    } label: {
-                        Label("Enable 8 AM Daily Strategy", systemImage: "bell")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
-                    if !notificationMessage.isEmpty {
-                        Text(notificationMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
 
                     NavigationLink {
@@ -570,18 +607,14 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
 
                     NavigationLink {
-                        PrivacyDataView(practiceStore: practiceStore)
+                        SettingsView(practiceStore: practiceStore)
                     } label: {
-                        Label("Privacy & Data", systemImage: "lock.shield")
+                        Label("Settings", systemImage: "gearshape")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
 
                     Text("\(strategyQuotes.count) curated passages")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                    Text(AppBuildInfo.displayVersion)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -592,10 +625,15 @@ struct ContentView: View {
         }
         .onAppear {
             todayIndices = todaysQuoteIndices()
-            selectedDailyQuote = 0
+            selectedDailyQuote = boundedSelectionIndex()
             loadDecisionForSelectedQuote()
         }
-        .onChange(of: selectedDailyQuote) { _ in
+        .onChange(of: selectedDailyQuote) { _, _ in
+            let boundedIndex = boundedSelectionIndex()
+            if selectedDailyQuote != boundedIndex {
+                selectedDailyQuote = boundedIndex
+            }
+
             loadDecisionForSelectedQuote()
         }
     }
@@ -606,15 +644,22 @@ struct ContentView: View {
     }
 
     private func markChallengeComplete() {
+        guard let currentQuoteIndex else { return }
         practiceStore.saveEntry(for: Date(), quoteIndex: currentQuoteIndex, decision: decisionText)
         decisionText = currentEntry?.decision ?? decisionText.trimmingCharacters(in: .whitespacesAndNewlines)
         completionMessage = currentEntry == nil ? "" : "Challenge saved for today"
     }
 
     private func clearTodayEntry() {
+        guard let currentQuoteIndex else { return }
         practiceStore.deleteEntry(for: Date(), quoteIndex: currentQuoteIndex)
         decisionText = ""
         completionMessage = ""
+    }
+
+    private func boundedSelectionIndex() -> Int {
+        guard !todayIndices.isEmpty else { return 0 }
+        return min(max(selectedDailyQuote, 0), todayIndices.count - 1)
     }
 }
 
@@ -771,12 +816,51 @@ struct HistoryView: View {
     }
 }
 
-struct PrivacyDataView: View {
+struct SettingsView: View {
     @ObservedObject var practiceStore: StrategyPracticeStore
+    @State private var remindersScheduled = false
+    @State private var reminderMessage = ""
     @State private var showingDeleteConfirmation = false
 
     var body: some View {
         List {
+            Section {
+                Text("Daily Strategy can send one local reminder each morning. Notifications stay on this device.")
+                    .foregroundStyle(.secondary)
+
+                Label(
+                    remindersScheduled ? "Daily reminders scheduled" : "Daily reminders disabled",
+                    systemImage: remindersScheduled ? "bell.badge" : "bell.slash"
+                )
+
+                Button {
+                    NotificationManager.shared.requestPermissionAndSchedule { granted in
+                        reminderMessage = granted ? "8 AM daily reminders scheduled for the next 30 days" : "Notification permission was not granted"
+                        refreshReminderStatus()
+                    }
+                } label: {
+                    Label("Enable Daily Reminder", systemImage: "bell")
+                }
+
+                Button(role: .destructive) {
+                    NotificationManager.shared.disableDailyReminders {
+                        reminderMessage = "Daily reminders disabled"
+                        refreshReminderStatus()
+                    }
+                } label: {
+                    Label("Disable Daily Reminder", systemImage: "bell.slash")
+                }
+                .disabled(!remindersScheduled)
+
+                if !reminderMessage.isEmpty {
+                    Text(reminderMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Reminders")
+            }
+
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Your practice entries stay on this device.")
@@ -809,8 +893,18 @@ struct PrivacyDataView: View {
             } footer: {
                 Text("This removes all saved practice history from this device. The quote library is not changed.")
             }
+
+            Section {
+                Text("\(strategyQuotes.count) curated passages")
+                Text(AppBuildInfo.displayVersion)
+            } header: {
+                Text("App")
+            }
         }
-        .navigationTitle("Privacy & Data")
+        .navigationTitle("Settings")
+        .onAppear {
+            refreshReminderStatus()
+        }
         .alert("Delete all practice data?", isPresented: $showingDeleteConfirmation) {
             Button("Delete All Data", role: .destructive) {
                 practiceStore.deleteAllEntries()
@@ -819,6 +913,12 @@ struct PrivacyDataView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This cannot be undone.")
+        }
+    }
+
+    private func refreshReminderStatus() {
+        NotificationManager.shared.remindersScheduled { scheduled in
+            remindersScheduled = scheduled
         }
     }
 }
