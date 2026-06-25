@@ -141,6 +141,118 @@ let strategyQuotes: [StrategyQuote] = [
     StrategyQuote(quote: "必取於人，知敵之情者也。", translation: "It must be obtained from people who know the enemy's situation.", wisdom: "Get close to the source of truth.", challenge: "Talk to one person who actually knows the situation.", chapter: "Chapter 13 · 用間篇")
 ]
 
+struct StrategyCharacterInfo: Identifiable {
+    let character: String
+    let pinyin: String
+    let jyutping: String
+    let meaning: String
+    let examples: [String]
+    let strategyUse: String
+
+    var id: String { character }
+}
+
+let strategyCharacterDictionary: [String: StrategyCharacterInfo] = [
+    "兵": StrategyCharacterInfo(
+        character: "兵",
+        pinyin: "bing1",
+        jyutping: "bing1",
+        meaning: "soldier, military force, strategy in conflict",
+        examples: ["兵法 - military strategy", "士兵 - soldier", "用兵 - to deploy forces"],
+        strategyUse: "In The Art of War, 兵 often points to the disciplined use of force, resources, and strategic action."
+    ),
+    "戰": StrategyCharacterInfo(
+        character: "戰",
+        pinyin: "zhan4",
+        jyutping: "zin3",
+        meaning: "war, battle, to fight",
+        examples: ["戰略 - strategy", "挑戰 - challenge", "作戰 - operation"],
+        strategyUse: "戰 frames the moment of conflict, but the text often teaches how to win before direct battle begins."
+    ),
+    "勝": StrategyCharacterInfo(
+        character: "勝",
+        pinyin: "sheng4",
+        jyutping: "sing3",
+        meaning: "victory, to win, to surpass",
+        examples: ["勝利 - victory", "取勝 - to win", "優勝 - superior"],
+        strategyUse: "勝 is the outcome strategy seeks, ideally through preparation, timing, and advantage rather than waste."
+    ),
+    "知": StrategyCharacterInfo(
+        character: "知",
+        pinyin: "zhi1",
+        jyutping: "zi1",
+        meaning: "to know, understand, perceive",
+        examples: ["知道 - to know", "知識 - knowledge", "通知 - notification"],
+        strategyUse: "知 highlights the need to understand yourself, others, timing, and context before acting."
+    ),
+    "敵": StrategyCharacterInfo(
+        character: "敵",
+        pinyin: "di2",
+        jyutping: "dik6",
+        meaning: "enemy, opponent, rival",
+        examples: ["敵人 - enemy", "對敵 - to oppose", "勁敵 - strong rival"],
+        strategyUse: "敵 represents the opposing force or challenge whose intentions and weaknesses must be understood."
+    ),
+    "謀": StrategyCharacterInfo(
+        character: "謀",
+        pinyin: "mou2",
+        jyutping: "mau4",
+        meaning: "plan, strategy, to scheme",
+        examples: ["謀略 - strategy", "計謀 - plan", "深謀遠慮 - long-term planning"],
+        strategyUse: "謀 points to planning and intention; the best victories often begin by shaping the plan."
+    ),
+    "勢": StrategyCharacterInfo(
+        character: "勢",
+        pinyin: "shi4",
+        jyutping: "sai3",
+        meaning: "momentum, power, situation",
+        examples: ["形勢 - situation", "趨勢 - trend", "氣勢 - momentum"],
+        strategyUse: "勢 is the force created by conditions, positioning, and momentum."
+    ),
+    "道": StrategyCharacterInfo(
+        character: "道",
+        pinyin: "dao4",
+        jyutping: "dou6",
+        meaning: "way, path, principle",
+        examples: ["道路 - road", "道理 - principle", "方法 - method"],
+        strategyUse: "道 often points to shared purpose and the guiding principle behind coordinated action."
+    ),
+    "法": StrategyCharacterInfo(
+        character: "法",
+        pinyin: "fa3",
+        jyutping: "faat3",
+        meaning: "method, law, standard",
+        examples: ["方法 - method", "法律 - law", "辦法 - solution"],
+        strategyUse: "法 emphasizes order, systems, standards, and the practical method that makes strategy work."
+    ),
+    "將": StrategyCharacterInfo(
+        character: "將",
+        pinyin: "jiang4",
+        jyutping: "zoeng3",
+        meaning: "commander, leader, general",
+        examples: ["將軍 - general", "將領 - commander", "即將 - about to"],
+        strategyUse: "將 focuses attention on leadership judgment, character, courage, and discipline."
+    ),
+    "利": StrategyCharacterInfo(
+        character: "利",
+        pinyin: "li4",
+        jyutping: "lei6",
+        meaning: "advantage, benefit, profit",
+        examples: ["利益 - benefit", "利用 - to use", "有利 - advantageous"],
+        strategyUse: "利 marks advantage: what people pursue, what conditions favor, and what makes action worthwhile."
+    ),
+    "天": StrategyCharacterInfo(
+        character: "天",
+        pinyin: "tian1",
+        jyutping: "tin1",
+        meaning: "heaven, sky, timing, conditions",
+        examples: ["今天 - today", "天氣 - weather", "天地 - heaven and earth"],
+        strategyUse: "天 points to timing, seasons, and conditions that shape whether action is wise."
+    )
+]
+
+let commonArtOfWarCharacters = ["兵", "戰", "勝", "知", "敵", "謀", "勢", "道", "法", "將", "利", "天"]
+
 func chapterKey(for quote: StrategyQuote) -> String {
     return quote.chapter.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? quote.chapter
 }
@@ -512,6 +624,50 @@ class NotificationManager {
 
 struct ContentView: View {
     @StateObject private var practiceStore = StrategyPracticeStore()
+
+    var body: some View {
+        TabView {
+            DailyPracticeView(practiceStore: practiceStore)
+                .tabItem {
+                    Label("Daily", systemImage: "sun.max")
+                }
+
+            NavigationStack {
+                CharactersView(todayIndices: todaysQuoteIndices())
+            }
+            .tabItem {
+                Label("Characters", systemImage: "character.book.closed")
+            }
+
+            NavigationStack {
+                HistoryView(entries: practiceStore.sortedEntries)
+            }
+            .tabItem {
+                Label("Practice", systemImage: "square.and.pencil")
+            }
+
+            NavigationStack {
+                StrategyLibraryView()
+            }
+            .tabItem {
+                Label("Library", systemImage: "books.vertical")
+            }
+
+            NavigationStack {
+                SettingsView(
+                    practiceStore: practiceStore,
+                    onDeleteAllPracticeData: {}
+                )
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape")
+            }
+        }
+    }
+}
+
+struct DailyPracticeView: View {
+    @ObservedObject var practiceStore: StrategyPracticeStore
     @State private var todayIndices = todaysQuoteIndices()
     @State private var selectedDailyQuote = 0
     @State private var decisionText = ""
@@ -625,33 +781,6 @@ struct ContentView: View {
                             .padding(.top, 4)
                     }
 
-                    NavigationLink {
-                        HistoryView(entries: practiceStore.sortedEntries)
-                    } label: {
-                        Label("Practice History", systemImage: "clock.arrow.circlepath")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
-                    NavigationLink {
-                        StrategyLibraryView()
-                    } label: {
-                        Label("Strategy Library", systemImage: "books.vertical")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
-                    NavigationLink {
-                        SettingsView(
-                            practiceStore: practiceStore,
-                            onDeleteAllPracticeData: refreshCurrentPractice
-                        )
-                    } label: {
-                        Label("Settings", systemImage: "gearshape")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-
                     Text("\(strategyQuotes.count) curated passages")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -672,6 +801,9 @@ struct ContentView: View {
                 selectedDailyQuote = boundedIndex
             }
 
+            loadDecisionForSelectedQuote()
+        }
+        .onChange(of: practiceStore.entries.count) { _, _ in
             loadDecisionForSelectedQuote()
         }
     }
@@ -702,6 +834,134 @@ struct ContentView: View {
     private func boundedSelectionIndex() -> Int {
         guard !todayIndices.isEmpty else { return 0 }
         return min(max(selectedDailyQuote, 0), todayIndices.count - 1)
+    }
+}
+
+struct CharactersView: View {
+    let todayIndices: [Int]
+
+    private var todayQuotes: [StrategyQuote] {
+        todayIndices.compactMap { index in
+            strategyQuotes.indices.contains(index) ? strategyQuotes[index] : nil
+        }
+    }
+
+    private var selectedCharacters: [StrategyCharacterInfo] {
+        var selected: [StrategyCharacterInfo] = []
+        var seenCharacters: Set<String> = []
+
+        for quote in todayQuotes {
+            for character in quote.quote.map(String.init) {
+                guard let info = strategyCharacterDictionary[character],
+                      !seenCharacters.contains(character) else {
+                    continue
+                }
+
+                selected.append(info)
+                seenCharacters.insert(character)
+
+                if selected.count == 3 {
+                    return selected
+                }
+            }
+        }
+
+        for character in commonArtOfWarCharacters {
+            guard let info = strategyCharacterDictionary[character],
+                  !seenCharacters.contains(character) else {
+                continue
+            }
+
+            selected.append(info)
+            seenCharacters.insert(character)
+
+            if selected.count == 3 {
+                break
+            }
+        }
+
+        return selected
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                ForEach(selectedCharacters) { characterInfo in
+                    CharacterLearningCard(
+                        characterInfo: characterInfo,
+                        todayQuotes: todayQuotes
+                    )
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("Characters")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+struct CharacterLearningCard: View {
+    let characterInfo: StrategyCharacterInfo
+    let todayQuotes: [StrategyQuote]
+
+    private var todayContext: String {
+        if let quote = todayQuotes.first(where: { $0.quote.contains(characterInfo.character) }) {
+            return "\(characterInfo.strategyUse) In today's strategy, it appears in: \(quote.quote)"
+        }
+
+        return "\(characterInfo.strategyUse) This common Art of War character is included to round out today's character practice."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(characterInfo.character)
+                .font(.system(size: 64, weight: .semibold))
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            CharacterInfoRow(title: "Mandarin", value: characterInfo.pinyin)
+            CharacterInfoRow(title: "Cantonese", value: characterInfo.jyutping)
+            CharacterInfoRow(title: "Meaning", value: characterInfo.meaning)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Modern Usage")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+
+                ForEach(characterInfo.examples, id: \.self) { example in
+                    Text(example)
+                        .font(.body)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("In Today's Strategy")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+
+                Text(todayContext)
+                    .font(.body)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
+struct CharacterInfoRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+
+            Text(value)
+                .font(.body)
+        }
     }
 }
 
