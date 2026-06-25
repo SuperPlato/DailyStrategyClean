@@ -374,7 +374,7 @@ struct StrategyProgress {
 
 struct AppBuildInfo {
     static var displayVersion: String {
-        let baseVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1"
+        let baseVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2"
         let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
         return "Version \(baseVersion).\(buildNumber)"
     }
