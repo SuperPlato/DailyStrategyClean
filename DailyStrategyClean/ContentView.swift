@@ -254,6 +254,94 @@ let strategyCharacterDictionary: [String: StrategyCharacterInfo] = [
 
 let commonArtOfWarCharacters = ["兵", "戰", "勝", "知", "敵", "謀", "勢", "道", "法", "將", "利", "天"]
 
+enum ChineseScriptOption: String, CaseIterable, Identifiable {
+    case auto
+    case traditional
+    case simplified
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .auto:
+            "Auto"
+        case .traditional:
+            "Traditional (繁體中文)"
+        case .simplified:
+            "Simplified (简体中文)"
+        }
+    }
+}
+
+struct ChineseScriptConverter {
+    static let storageKey = "chinese_script_preference"
+
+    static func displayText(_ text: String, preferenceRawValue: String) -> String {
+        let preference = ChineseScriptOption(rawValue: preferenceRawValue) ?? .auto
+
+        switch resolvedScript(for: preference) {
+        case .traditional:
+            return text
+        case .simplified:
+            return text.map { character in
+                traditionalToSimplified[String(character)] ?? String(character)
+            }.joined()
+        case .auto:
+            return text
+        }
+    }
+
+    static func currentDisplayText(_ text: String) -> String {
+        let preference = UserDefaults.standard.string(forKey: storageKey) ?? ChineseScriptOption.auto.rawValue
+        return displayText(text, preferenceRawValue: preference)
+    }
+
+    private static func resolvedScript(for preference: ChineseScriptOption) -> ChineseScriptOption {
+        switch preference {
+        case .traditional, .simplified:
+            return preference
+        case .auto:
+            return devicePreferredScript()
+        }
+    }
+
+    private static func devicePreferredScript() -> ChineseScriptOption {
+        for language in Locale.preferredLanguages {
+            let normalized = language.lowercased()
+
+            if normalized.hasPrefix("zh-hans") || normalized.contains("-cn") || normalized.contains("-sg") {
+                return .simplified
+            }
+
+            if normalized.hasPrefix("zh-hant") || normalized.contains("-tw") || normalized.contains("-hk") || normalized.contains("-mo") {
+                return .traditional
+            }
+        }
+
+        return .traditional
+    }
+
+    private static let traditionalToSimplified: [String: String] = [
+        "國": "国", "與": "与", "陰": "阴", "陽": "阳", "遠": "远", "廣": "广", "狹": "狭", "將": "将",
+        "嚴": "严", "詭": "诡", "亂": "乱", "實": "实", "備": "备", "強": "强", "撓": "挠", "驕": "骄",
+        "親": "亲", "離": "离", "勝": "胜", "戰": "战", "廟": "庙", "貴": "贵", "鈍": "钝", "銳": "锐",
+        "費": "费", "萬": "万", "師": "师", "舉": "举", "聞": "闻", "睹": "睹", "糧": "粮", "敵": "敌",
+        "謀": "谋", "攻": "攻", "屈": "屈", "軍": "军", "眾": "众", "擊": "击", "識": "识", "寡": "寡",
+        "虞": "虞", "禦": "御", "為": "为", "守": "守",
+        "餘": "余", "後": "后", "敗": "败", "見": "见", "過": "过", "藏": "藏", "於": "于", "動": "动",
+        "衆": "众", "鬥": "斗", "勢": "势", "險": "险", "責": "责", "轉": "转", "趨": "趋", "勞": "劳",
+        "微": "微", "聲": "声", "無": "无", "常": "常", "制": "制", "爭": "争", "諸": "诸", "預": "预",
+        "風": "风", "徐": "徐", "林": "林", "難": "难", "奪": "夺", "氣": "气", "惰": "惰",
+        "歸": "归", "邀": "邀", "陣": "阵", "圍": "围", "闕": "阙", "窮": "穷", "慮": "虑", "雜": "杂",
+        "務": "务", "憂": "忧", "恃": "恃", "來": "来", "虜": "虏", "忿": "忿", "速": "速", "侮": "侮",
+        "廉": "廉", "潔": "洁", "愛": "爱", "煩": "烦", "令": "令", "齊": "齐", "附": "附", "罰": "罚",
+        "則": "则", "服": "服", "已": "已", "執": "执", "場": "场", "陷": "陷", "處": "处", "開": "开",
+        "戶": "户", "脫": "脱", "興": "兴", "慍": "愠", "復": "复", "悅": "悦", "靈": "灵", "驗": "验",
+        "情": "情", "者": "者", "篇": "篇", "始": "始", "計": "计", "作": "作", "形": "形", "虛": "虚",
+        "變": "变", "行": "行", "地": "地", "間": "间", "孫": "孙", "體": "体", "簡": "简", "個": "个"
+    ]
+}
+
 func chapterKey(for quote: StrategyQuote) -> String {
     return quote.chapter.components(separatedBy: "·").first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? quote.chapter
 }
@@ -374,7 +462,7 @@ struct StrategyProgress {
 
 struct AppBuildInfo {
     static var displayVersion: String {
-        let baseVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2"
+        let baseVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.0"
         let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
         return "Version \(baseVersion).\(buildNumber)"
     }
@@ -544,7 +632,7 @@ class NotificationManager {
 
                 let content = UNMutableNotificationContent()
                 content.title = "Daily Strategy"
-                content.subtitle = quote.quote
+                content.subtitle = ChineseScriptConverter.currentDisplayText(quote.quote)
                 content.body = quote.challenge
                 content.sound = .default
 
@@ -669,6 +757,7 @@ struct ContentView: View {
 
 struct DailyPracticeView: View {
     @ObservedObject var practiceStore: StrategyPracticeStore
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     @State private var todayIndices = todaysQuoteIndices()
     @State private var selectedDailyQuote = 0
     @State private var decisionText = ""
@@ -703,7 +792,7 @@ struct DailyPracticeView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 22) {
-                    Text("每日一策")
+                    Text(ChineseScriptConverter.displayText("每日一策", preferenceRawValue: chineseScriptPreference))
                         .font(.largeTitle)
                         .fontWeight(.bold)
 
@@ -735,7 +824,7 @@ struct DailyPracticeView: View {
                             onClear: clearTodayEntry
                         )
 
-                        Text(currentQuote.chapter)
+                        Text(ChineseScriptConverter.displayText(currentQuote.chapter, preferenceRawValue: chineseScriptPreference))
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -902,12 +991,14 @@ struct CharactersView: View {
 }
 
 struct CharacterLearningCard: View {
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     let characterInfo: StrategyCharacterInfo
     let todayQuotes: [StrategyQuote]
 
     private var todayContext: String {
         if let quote = todayQuotes.first(where: { $0.quote.contains(characterInfo.character) }) {
-            return "\(characterInfo.strategyUse) In today's strategy, it appears in: \(quote.quote)"
+            let displayedQuote = ChineseScriptConverter.displayText(quote.quote, preferenceRawValue: chineseScriptPreference)
+            return "\(characterInfo.strategyUse) In today's strategy, it appears in: \(displayedQuote)"
         }
 
         return "\(characterInfo.strategyUse) This common Art of War character is included to round out today's character practice."
@@ -915,7 +1006,7 @@ struct CharacterLearningCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(characterInfo.character)
+            Text(ChineseScriptConverter.displayText(characterInfo.character, preferenceRawValue: chineseScriptPreference))
                 .font(.system(size: 64, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .center)
 
@@ -929,7 +1020,7 @@ struct CharacterLearningCard: View {
                     .foregroundStyle(.secondary)
 
                 ForEach(characterInfo.examples, id: \.self) { example in
-                    Text(example)
+                    Text(ChineseScriptConverter.displayText(example, preferenceRawValue: chineseScriptPreference))
                         .font(.body)
                 }
             }
@@ -967,6 +1058,7 @@ struct CharacterInfoRow: View {
 }
 
 struct StrategyCard: View {
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     let title: String
     let text: String
     var isChinese: Bool = false
@@ -977,7 +1069,7 @@ struct StrategyCard: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
 
-            Text(text)
+            Text(isChinese ? ChineseScriptConverter.displayText(text, preferenceRawValue: chineseScriptPreference) : text)
                 .font(isChinese ? .title : .body)
                 .fontWeight(isChinese ? .medium : .regular)
                 .multilineTextAlignment(isChinese ? .center : .leading)
@@ -1083,6 +1175,7 @@ struct PracticeCard: View {
 }
 
 struct HistoryView: View {
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     let entries: [StrategyPracticeEntry]
 
     var body: some View {
@@ -1101,7 +1194,7 @@ struct HistoryView: View {
                             .foregroundStyle(.secondary)
 
                         if let quote = entry.quote {
-                            Text(quote.quote)
+                            Text(ChineseScriptConverter.displayText(quote.quote, preferenceRawValue: chineseScriptPreference))
                                 .font(.title3)
                                 .fontWeight(.medium)
 
@@ -1122,6 +1215,7 @@ struct HistoryView: View {
 }
 
 struct StrategyLibraryView: View {
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     @State private var searchText = ""
 
     private var trimmedSearchText: String {
@@ -1137,9 +1231,11 @@ struct StrategyLibraryView: View {
 
         return strategyQuotes.filter { quote in
             quote.quote.localizedCaseInsensitiveContains(trimmedSearchText) ||
+            ChineseScriptConverter.displayText(quote.quote, preferenceRawValue: chineseScriptPreference).localizedCaseInsensitiveContains(trimmedSearchText) ||
             quote.translation.localizedCaseInsensitiveContains(trimmedSearchText) ||
             quote.wisdom.localizedCaseInsensitiveContains(trimmedSearchText) ||
-            quote.chapter.localizedCaseInsensitiveContains(trimmedSearchText)
+            quote.chapter.localizedCaseInsensitiveContains(trimmedSearchText) ||
+            ChineseScriptConverter.displayText(quote.chapter, preferenceRawValue: chineseScriptPreference).localizedCaseInsensitiveContains(trimmedSearchText)
         }
     }
 
@@ -1169,7 +1265,7 @@ struct StrategyLibraryView: View {
                 }
             } else {
                 ForEach(chapterNames, id: \.self) { chapter in
-                    Section(chapter) {
+                    Section(ChineseScriptConverter.displayText(chapter, preferenceRawValue: chineseScriptPreference)) {
                         ForEach(strategyQuotes.filter { $0.chapter == chapter }) { quote in
                             NavigationLink {
                                 StrategyQuoteDetailView(quote: quote)
@@ -1187,11 +1283,12 @@ struct StrategyLibraryView: View {
 }
 
 struct StrategyLibraryRow: View {
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     let quote: StrategyQuote
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(quote.quote)
+            Text(ChineseScriptConverter.displayText(quote.quote, preferenceRawValue: chineseScriptPreference))
                 .font(.headline)
 
             Text(quote.translation)
@@ -1199,7 +1296,7 @@ struct StrategyLibraryRow: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
 
-            Text(quote.chapter)
+            Text(ChineseScriptConverter.displayText(quote.chapter, preferenceRawValue: chineseScriptPreference))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -1208,6 +1305,7 @@ struct StrategyLibraryRow: View {
 }
 
 struct StrategyQuoteDetailView: View {
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     let quote: StrategyQuote
 
     var body: some View {
@@ -1218,7 +1316,7 @@ struct StrategyQuoteDetailView: View {
                 StrategyCard(title: "Applied Wisdom", text: quote.wisdom)
                 StrategyCard(title: "Today's Challenge", text: quote.challenge)
 
-                Text(quote.chapter)
+                Text(ChineseScriptConverter.displayText(quote.chapter, preferenceRawValue: chineseScriptPreference))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1232,12 +1330,24 @@ struct StrategyQuoteDetailView: View {
 struct SettingsView: View {
     @ObservedObject var practiceStore: StrategyPracticeStore
     let onDeleteAllPracticeData: () -> Void
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     @State private var remindersScheduled = false
     @State private var reminderMessage = ""
     @State private var showingDeleteConfirmation = false
 
     var body: some View {
         List {
+            Section {
+                Picker("Chinese Script", selection: $chineseScriptPreference) {
+                    ForEach(ChineseScriptOption.allCases) { option in
+                        Text(option.title)
+                            .tag(option.rawValue)
+                    }
+                }
+            } header: {
+                Text("Chinese Script")
+            }
+
             Section {
                 Text("Daily Strategy can send one local reminder each morning. Notifications stay on this device.")
                     .foregroundStyle(.secondary)
