@@ -4,13 +4,14 @@ import Combine
 
 let privacyPolicyURL = URL(string: "https://sites.google.com/view/superplato321/home")!
 
-struct StrategyQuote: Identifiable {
-    let id = UUID()
+struct StrategyQuote: Identifiable, Hashable {
     let quote: String
     let translation: String
     let wisdom: String
     let challenge: String
     let chapter: String
+
+    var id: String { quote }
 }
 
 let strategyQuotes: [StrategyQuote] = [
@@ -582,6 +583,43 @@ class StrategyPracticeStore: ObservableObject {
     }()
 }
 
+class FavoriteStrategyStore: ObservableObject {
+    @Published private(set) var favoriteIDs: Set<String> = []
+
+    private let storageKey = "daily_strategy_favorite_quotes"
+
+    init() {
+        load()
+    }
+
+    var favoriteQuotes: [StrategyQuote] {
+        strategyQuotes.filter { favoriteIDs.contains($0.id) }
+    }
+
+    func isFavorite(_ quote: StrategyQuote) -> Bool {
+        favoriteIDs.contains(quote.id)
+    }
+
+    func toggleFavorite(_ quote: StrategyQuote) {
+        if favoriteIDs.contains(quote.id) {
+            favoriteIDs.remove(quote.id)
+        } else {
+            favoriteIDs.insert(quote.id)
+        }
+
+        save()
+    }
+
+    private func load() {
+        let savedIDs = UserDefaults.standard.stringArray(forKey: storageKey) ?? []
+        favoriteIDs = Set(savedIDs)
+    }
+
+    private func save() {
+        UserDefaults.standard.set(Array(favoriteIDs), forKey: storageKey)
+    }
+}
+
 class NotificationManager {
     static let shared = NotificationManager()
 
@@ -713,10 +751,11 @@ class NotificationManager {
 
 struct ContentView: View {
     @StateObject private var practiceStore = StrategyPracticeStore()
+    @StateObject private var favoriteStore = FavoriteStrategyStore()
 
     var body: some View {
         TabView {
-            DailyPracticeView(practiceStore: practiceStore)
+            DailyPracticeView(practiceStore: practiceStore, favoriteStore: favoriteStore)
                 .tabItem {
                     Label("Daily", systemImage: "sun.max")
                 }
@@ -736,7 +775,7 @@ struct ContentView: View {
             }
 
             NavigationStack {
-                StrategyLibraryView()
+                StrategyLibraryView(favoriteStore: favoriteStore)
             }
             .tabItem {
                 Label("Library", systemImage: "books.vertical")
@@ -757,6 +796,7 @@ struct ContentView: View {
 
 struct DailyPracticeView: View {
     @ObservedObject var practiceStore: StrategyPracticeStore
+    @ObservedObject var favoriteStore: FavoriteStrategyStore
     @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     @State private var todayIndices = todaysQuoteIndices()
     @State private var selectedDailyQuote = 0
@@ -810,6 +850,12 @@ struct DailyPracticeView: View {
                             .foregroundStyle(.secondary)
 
                         StrategyCard(title: "Original Quote", text: currentQuote.quote, isChinese: true)
+
+                        FavoriteToggleButton(
+                            isFavorite: favoriteStore.isFavorite(currentQuote),
+                            action: { favoriteStore.toggleFavorite(currentQuote) }
+                        )
+
                         StrategyCard(title: "Translation", text: currentQuote.translation)
                         StrategyCard(title: "Applied Wisdom", text: currentQuote.wisdom)
                         StrategyCard(title: "Today's Challenge", text: currentQuote.challenge)
@@ -1082,6 +1128,23 @@ struct StrategyCard: View {
     }
 }
 
+struct FavoriteToggleButton: View {
+    let isFavorite: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(
+                isFavorite ? "Remove Favorite" : "Add Favorite",
+                systemImage: isFavorite ? "star.fill" : "star"
+            )
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
+        .tint(isFavorite ? .yellow : .accentColor)
+    }
+}
+
 struct ProgressSummaryView: View {
     let progress: StrategyProgress
 
@@ -1215,8 +1278,10 @@ struct HistoryView: View {
 }
 
 struct StrategyLibraryView: View {
+    @ObservedObject var favoriteStore: FavoriteStrategyStore
     @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     @State private var searchText = ""
+    @State private var randomQuote: StrategyQuote?
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1255,10 +1320,26 @@ struct StrategyLibraryView: View {
 
     var body: some View {
         List {
+            if !isSearching {
+                Section {
+                    NavigationLink {
+                        FavoriteStrategiesView(favoriteStore: favoriteStore)
+                    } label: {
+                        Label("Favorites", systemImage: "star")
+                    }
+
+                    Button {
+                        randomQuote = strategyQuotes.randomElement()
+                    } label: {
+                        Label("Random Strategy", systemImage: "shuffle")
+                    }
+                }
+            }
+
             if isSearching {
                 ForEach(filteredQuotes) { quote in
                     NavigationLink {
-                        StrategyQuoteDetailView(quote: quote)
+                        StrategyQuoteDetailView(quote: quote, favoriteStore: favoriteStore)
                     } label: {
                         StrategyLibraryRow(quote: quote)
                     }
@@ -1268,7 +1349,7 @@ struct StrategyLibraryView: View {
                     Section(ChineseScriptConverter.displayText(chapter, preferenceRawValue: chineseScriptPreference)) {
                         ForEach(strategyQuotes.filter { $0.chapter == chapter }) { quote in
                             NavigationLink {
-                                StrategyQuoteDetailView(quote: quote)
+                                StrategyQuoteDetailView(quote: quote, favoriteStore: favoriteStore)
                             } label: {
                                 StrategyLibraryRow(quote: quote)
                             }
@@ -1279,6 +1360,34 @@ struct StrategyLibraryView: View {
         }
         .navigationTitle("Strategy Library")
         .searchable(text: $searchText, prompt: "Search quotes, wisdom, or chapter")
+        .navigationDestination(item: $randomQuote) { quote in
+            StrategyQuoteDetailView(quote: quote, favoriteStore: favoriteStore)
+        }
+    }
+}
+
+struct FavoriteStrategiesView: View {
+    @ObservedObject var favoriteStore: FavoriteStrategyStore
+
+    var body: some View {
+        Group {
+            if favoriteStore.favoriteQuotes.isEmpty {
+                ContentUnavailableView(
+                    "No Favorites Yet",
+                    systemImage: "star",
+                    description: Text("Favorite strategies from Daily or the Strategy Library to collect them here.")
+                )
+            } else {
+                List(favoriteStore.favoriteQuotes) { quote in
+                    NavigationLink {
+                        StrategyQuoteDetailView(quote: quote, favoriteStore: favoriteStore)
+                    } label: {
+                        FavoriteStrategyRow(quote: quote)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Favorites")
     }
 }
 
@@ -1304,14 +1413,45 @@ struct StrategyLibraryRow: View {
     }
 }
 
-struct StrategyQuoteDetailView: View {
+struct FavoriteStrategyRow: View {
     @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
     let quote: StrategyQuote
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(ChineseScriptConverter.displayText(quote.quote, preferenceRawValue: chineseScriptPreference))
+                .font(.headline)
+
+            Text(ChineseScriptConverter.displayText(quote.chapter, preferenceRawValue: chineseScriptPreference))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(quote.translation)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text(quote.wisdom)
+                .font(.body)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+struct StrategyQuoteDetailView: View {
+    let quote: StrategyQuote
+    @ObservedObject var favoriteStore: FavoriteStrategyStore
+    @AppStorage(ChineseScriptConverter.storageKey) private var chineseScriptPreference = ChineseScriptOption.auto.rawValue
 
     var body: some View {
         ScrollView {
             VStack(spacing: 18) {
                 StrategyCard(title: "Original Quote", text: quote.quote, isChinese: true)
+
+                FavoriteToggleButton(
+                    isFavorite: favoriteStore.isFavorite(quote),
+                    action: { favoriteStore.toggleFavorite(quote) }
+                )
+
                 StrategyCard(title: "Translation", text: quote.translation)
                 StrategyCard(title: "Applied Wisdom", text: quote.wisdom)
                 StrategyCard(title: "Today's Challenge", text: quote.challenge)
